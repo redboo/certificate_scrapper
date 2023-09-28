@@ -35,16 +35,31 @@ def calculate_total_pages(total_items: int, items_per_page: int) -> int:
     return -(-total_items // items_per_page)
 
 
-def fetch_data_with_retry(url: str, params: dict, headers: dict, max_retries: int = 3) -> dict:
+def fetch_data_with_retry(
+    url: str,
+    headers: dict,
+    method: str = "post",
+    params: dict = {},
+    max_retries: int = 3,
+) -> dict:
     for attempt in range(max_retries):
         try:
-            response = requests.post(url, verify=False, headers=headers, json=params)
-            response.raise_for_status()
-            return response.json()
+            match method:
+                case "post":
+                    response = requests.post(url, verify=False, headers=headers, json=params)
+                    response.raise_for_status()
+                    return response.json()
+                case "get":
+                    response = requests.get(url, verify=False, headers=headers, json=params)
+                    response.raise_for_status()
+                    return response.json()
         except requests.exceptions.RequestException as e:
-            logging.error("Ошибка при запросе (попытка %d): %s", attempt + 1, e)
+            if response.status_code == 401:
+                logging.error("Нужно заменить BEARER_TOKEN")
+            else:
+                logging.error("Ошибка при запросе (попытка %d): %s", attempt + 1, e)
             if attempt < max_retries - 1:
-                time.sleep(1)
+                time.sleep(0.1)
             else:
                 raise
 
@@ -58,14 +73,14 @@ def fetch_certificate_page(num_page: int = 0) -> dict:
         "filter": {
             "idTechReg": [39, 8],
             "regDate": {"minDate": "", "maxDate": ""},
-            "endDate": {"minDate": "2023-11-11T00:00:00.000Z", "maxDate": "2023-12-31T00:00:00.000Z"},
+            "endDate": {"minDate": "2023-11-01T00:00:00.000Z", "maxDate": "2023-12-31T00:00:00.000Z"},
             "columnsSearch": [],
         },
         "columnsSort": [{"column": "date", "sort": "DESC"}],
     }
 
     headers = {"Authorization": BEARER_TOKEN}
-    return fetch_data_with_retry(url, data, headers)
+    return fetch_data_with_retry(url, headers, params=data)
 
 
 def fetch_all_certificate_pages(filename: str):
@@ -76,7 +91,7 @@ def fetch_all_certificate_pages(filename: str):
     for page in range(1, total_pages):
         page_data = fetch_certificate_page(page)
         items.extend(page_data["items"])
-        time.sleep(1)
+        time.sleep(0.1)
 
     df = pd.DataFrame(items)
     df.to_csv(filename, index=False)
@@ -91,10 +106,11 @@ def fetch_identifiers() -> dict:
             return json.load(identifiers_file)
 
     headers = {"Authorization": BEARER_TOKEN}
-    identifiers = fetch_data_with_retry(url, {}, headers)
+    identifiers = fetch_data_with_retry(url, headers, method="get")
     with open(identifiers_filename, "w") as identifiers_file:
-        json.dump(identifiers, identifiers_file)
+        json.dump(identifiers, identifiers_file, ensure_ascii=False)
 
+    logging.info("Файл идентификаторов скачан")
     return identifiers
 
 
@@ -106,9 +122,9 @@ def fetch_certificate_details(certificate_id: int) -> dict:
 
     url = f"https://pub.fsa.gov.ru/api/v1/rss/common/certificates/{certificate_id}"
     headers = {"Authorization": BEARER_TOKEN}
-    details = fetch_data_with_retry(url, {}, headers)
+    details = fetch_data_with_retry(url, headers, method="get")
     with open(detail_path, "w") as detail_file:
-        json.dump(details, detail_file)
+        json.dump(details, detail_file, ensure_ascii=False)
 
     return details
 
@@ -155,7 +171,7 @@ def process_certificates():
                 "дата окончания": df.at[row, "endDate"],
                 "тип заявителя": df.at[row, "applicantLegalSubjectType"],
                 "организационно-правовая форма": df.at[row, "applicantOpf"],
-                "полное наименование": df.at[row, "applicantName"],
+                "полное наименование": certificate_details["applicant"]["fullName"],
                 "фамилия": certificate_details["applicant"]["surname"],
                 "имя": certificate_details["applicant"]["firstName"],
                 "отчество": certificate_details["applicant"].get("patronymic", ""),
