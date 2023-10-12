@@ -39,9 +39,11 @@ def fetch_data_with_retry(
     url: str,
     headers: dict,
     method: str = "post",
-    params: dict = {},
+    params: dict = None,
     max_retries: int = 3,
 ) -> dict:
+    if params is None:
+        params = {}
     for attempt in range(max_retries):
         try:
             match method:
