@@ -16,7 +16,6 @@ from config import (
     OUTPUT_CERTS,
     OUTPUT_DATE_FORMAT,
     PAGE_SIZE,
-    TRTS,
 )
 
 requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
@@ -73,19 +72,64 @@ def fetch_data_with_retry(
                 raise
 
 
+def fetch_trts_data():
+    trts_file_path = "downloads/trts.json"
+    if os.path.exists(trts_file_path):
+        logging.info("Файл 'downloads/trts.json' уже существует, загрузка не требуется.")
+        try:
+            with open(trts_file_path, "r", encoding="utf-8") as file:
+                data = json.load(file)
+            return data
+        except Exception as e:
+            logging.error(f"Ошибка при чтении файла: {e}")
+            return None
+    else:
+        url = "https://pub.fsa.gov.ru/nsi/api/dicNormDoc/get"
+        headers = {"Authorization": BEARER_TOKEN}
+        try:
+            if data := fetch_data_with_retry(url, headers):
+                with open(trts_file_path, "w", encoding="utf-8") as file:
+                    json.dump(data, file, ensure_ascii=False, indent=4)
+
+                logging.info("Данные успешно сохранены в downloads/trts.json")
+                return data
+            else:
+                logging.error("Не удалось получить данные.")
+                return None
+        except Exception as e:
+            logging.error(f"Ошибка при запросе данных: {e}")
+            return None
+
+
+def get_trts_data(interesting_ids):
+    trts_data = fetch_trts_data()
+    if not trts_data:
+        logging.error("Не удалось получить данные.")
+        return None
+
+    return {item["id"]: [item["displayName"], item["name"]] for item in trts_data.get("items", [])}, {
+        item["id"]: [item["displayName"], item["name"]]
+        for item in trts_data.get("items", [])
+        if item.get("displayName", "").startswith("ТР ТС ")
+        and item.get("displayName", "").split(" ")[2][:3] in interesting_ids
+    }
+
+
 def fetch_certificate_page(
     num_page: int = 0,
     min_end_date: datetime = None,
     max_end_date: datetime = None,
+    filter_tech_reg_ids: list = None,
 ) -> dict:
+    if filter_tech_reg_ids is None:
+        filter_tech_reg_ids = []
     logging.info("Загрузка страницы: %d", num_page)
     url = "https://pub.fsa.gov.ru/api/v1/rss/common/certificates/get"
     data = {
         "size": 100,
         "page": num_page,
         "filter": {
-            "idTechReg": [39, 8],
-            # "idTechReg": [39],
+            "idTechReg": filter_tech_reg_ids,
             "regDate": {"minDate": "", "maxDate": ""},
             "endDate": {
                 "minDate": min_end_date.strftime(FILTER_DATE_FORMAT),
@@ -104,8 +148,15 @@ def fetch_all_certificate_pages(
     filename: str,
     min_end_date: str = "",
     max_end_date: str = "",
+    filter_tech_reg_ids: dict = None,
 ):
-    first_page = fetch_certificate_page(min_end_date=parse_date(min_end_date), max_end_date=parse_date(max_end_date))
+    if filter_tech_reg_ids is None:
+        filter_tech_reg_ids = {}
+    first_page = fetch_certificate_page(
+        min_end_date=parse_date(min_end_date),
+        max_end_date=parse_date(max_end_date),
+        filter_tech_reg_ids=list(filter_tech_reg_ids.keys()),
+    )
     total_pages = calculate_total_pages(first_page["total"], PAGE_SIZE)
     items = first_page["items"]
 
@@ -152,7 +203,7 @@ def fetch_certificate_details(certificate_id: int) -> dict:
     return details
 
 
-def process_certificates():
+def process_certificates(tech_reg_ids: dict):
     identifiers = fetch_identifiers()
     status_map = {status["id"]: status["name"] for status in identifiers.get("status", {}).values()}
 
@@ -180,7 +231,7 @@ def process_certificates():
         applicant_address = certificate_details["applicant"]["addresses"]
         manufacturer_address = certificate_details["manufacturer"]["addresses"]
 
-        trts_id = [TRTS[trts] for trts in certificate_details["idTechnicalReglaments"]]
+        trts_id = [tech_reg_ids.get(trts) for trts in certificate_details["idTechnicalReglaments"]]
 
         reg_date = parse_date(df.at[row, "date"]).strftime(OUTPUT_DATE_FORMAT)
         end_date = parse_date(df.at[row, "endDate"]).strftime(OUTPUT_DATE_FORMAT)
@@ -229,10 +280,19 @@ def main():
     if not os.path.exists(CERTIFICATES_DETAILS_DIR):
         os.makedirs(CERTIFICATES_DETAILS_DIR)
 
-    if not os.path.exists(CERT_DATA_FILENAME):
-        fetch_all_certificate_pages(CERT_DATA_FILENAME, min_end_date="20231013", max_end_date="20231013")
+    ids_tech_reg = "004, 010, 020, 007, 017"
+    interesting_ids = [id.strip() for id in ids_tech_reg.split(",")]
+    trts, filtered_trts = get_trts_data(interesting_ids)
 
-    process_certificates()
+    if not os.path.exists(CERT_DATA_FILENAME):
+        fetch_all_certificate_pages(
+            CERT_DATA_FILENAME,
+            min_end_date="20240101",
+            max_end_date="20240630",
+            filter_tech_reg_ids=filtered_trts,
+        )
+
+    process_certificates(trts)
 
 
 if __name__ == "__main__":
