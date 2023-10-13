@@ -2,29 +2,26 @@ import json
 import logging
 import os
 import time
+from datetime import datetime
 
 import pandas as pd
 import requests
-from dotenv import load_dotenv
+
+from config import (
+    BEARER_TOKEN,
+    CERT_DATA_FILENAME,
+    CERTIFICATES_DETAILS_DIR,
+    DOWNLOADS_DIR,
+    FILTER_DATE_FORMAT,
+    OUTPUT_CERTS,
+    OUTPUT_DATE_FORMAT,
+    PAGE_SIZE,
+    TRTS,
+)
 
 requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
 
-load_dotenv()
-BEARER_TOKEN = str(os.getenv("BEARER_TOKEN"))
-PAGE_SIZE = 100
-DOWNLOADS_DIR = "downloads"
-CERTIFICATES_DETAILS_DIR = f"{DOWNLOADS_DIR}/certificate_details"
-CERT_DATA_FILENAME = f"{DOWNLOADS_DIR}/cert_data.csv"
-OUTPUT_CERTS = f"{DOWNLOADS_DIR}/output_certificates.csv"
-TRTS = {
-    39: 'ТР ТС 007/2011 "О безопасности продукции, предназначенной для детей и подростков"',
-    8: 'ТР ТС 017/2011 "О безопасности продукции легкой промышленности"',
-    24: 'ТР ТС 020/2011 "Электромагнитная совместимость технических средств"',
-}
-
-# Настройка логирования
 logging.basicConfig(
-    # filename="logfile.log",
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -33,6 +30,16 @@ logging.basicConfig(
 
 def calculate_total_pages(total_items: int, items_per_page: int) -> int:
     return -(-total_items // items_per_page)
+
+
+def parse_date(date_str):
+    date_formats = ["%Y%m%d", "%Y-%m-%d", "%d.%m.%Y"]
+    for date_format in date_formats:
+        try:
+            return datetime.strptime(date_str, date_format)
+        except ValueError:
+            continue
+    return None
 
 
 def fetch_data_with_retry(
@@ -66,7 +73,11 @@ def fetch_data_with_retry(
                 raise
 
 
-def fetch_certificate_page(num_page: int = 0) -> dict:
+def fetch_certificate_page(
+    num_page: int = 0,
+    min_end_date: datetime = None,
+    max_end_date: datetime = None,
+) -> dict:
     logging.info("Загрузка страницы: %d", num_page)
     url = "https://pub.fsa.gov.ru/api/v1/rss/common/certificates/get"
     data = {
@@ -74,8 +85,12 @@ def fetch_certificate_page(num_page: int = 0) -> dict:
         "page": num_page,
         "filter": {
             "idTechReg": [39, 8],
+            # "idTechReg": [39],
             "regDate": {"minDate": "", "maxDate": ""},
-            "endDate": {"minDate": "2023-11-01T00:00:00.000Z", "maxDate": "2023-12-31T00:00:00.000Z"},
+            "endDate": {
+                "minDate": min_end_date.strftime(FILTER_DATE_FORMAT),
+                "maxDate": max_end_date.strftime(FILTER_DATE_FORMAT),
+            },
             "columnsSearch": [],
         },
         "columnsSort": [{"column": "date", "sort": "DESC"}],
@@ -85,13 +100,19 @@ def fetch_certificate_page(num_page: int = 0) -> dict:
     return fetch_data_with_retry(url, headers, params=data)
 
 
-def fetch_all_certificate_pages(filename: str):
-    first_page = fetch_certificate_page()
+def fetch_all_certificate_pages(
+    filename: str,
+    min_end_date: str = "",
+    max_end_date: str = "",
+):
+    first_page = fetch_certificate_page(min_end_date=parse_date(min_end_date), max_end_date=parse_date(max_end_date))
     total_pages = calculate_total_pages(first_page["total"], PAGE_SIZE)
     items = first_page["items"]
 
     for page in range(1, total_pages):
-        page_data = fetch_certificate_page(page)
+        page_data = fetch_certificate_page(
+            page, min_end_date=parse_date(min_end_date), max_end_date=parse_date(max_end_date)
+        )
         items.extend(page_data["items"])
         time.sleep(0.1)
 
@@ -161,18 +182,21 @@ def process_certificates():
 
         trts_id = [TRTS[trts] for trts in certificate_details["idTechnicalReglaments"]]
 
+        reg_date = parse_date(df.at[row, "date"]).strftime(OUTPUT_DATE_FORMAT)
+        end_date = parse_date(df.at[row, "endDate"]).strftime(OUTPUT_DATE_FORMAT)
+
         try:
             output = {
                 "id": certificate_id,
-                "link_str": f"https://pub.fsa.gov.ru/rss/certificate/view/{certificate_id}/baseInfo",
+                "link": f"https://pub.fsa.gov.ru/rss/certificate/view/{certificate_id}/baseInfo",
                 "номер": df.at[row, "number"],
                 "статус": status_map.get(df.at[row, "idStatus"], ""),
                 "выпуск": df.at[row, "certObjectType"],
                 "схема": f"{certificate_details['idCertScheme']}с",
-                "дата оформления": df.at[row, "date"],
-                "дата окончания": df.at[row, "endDate"],
-                "тип заявителя": df.at[row, "applicantLegalSubjectType"],
-                "организационно-правовая форма": df.at[row, "applicantOpf"],
+                "дата оформления": reg_date,
+                "дата окончания": end_date,
+                # "тип заявителя": df.at[row, "applicantLegalSubjectType"],
+                # "организационно-правовая форма": df.at[row, "applicantOpf"],
                 "полное наименование": certificate_details["applicant"]["fullName"],
                 "фамилия": certificate_details["applicant"]["surname"],
                 "имя": certificate_details["applicant"]["firstName"],
@@ -181,7 +205,7 @@ def process_certificates():
                 "огрн": certificate_details["applicant"].get("ogrn", ""),
                 "почта": emails[0] if emails else "",
                 "телефон1": phones[0] if phones else "",
-                "телефон2(если есть)": phones[1] if len(phones) > 1 else "",
+                # "телефон2(если есть)": phones[1] if len(phones) > 1 else "",
                 "адрес": applicant_address[0]["fullAddress"] if applicant_address else None,
                 "производитель": df.at[row, "manufacterName"],
                 "адрес производителя": manufacturer_address[0]["fullAddress"] if manufacturer_address else None,
@@ -206,7 +230,7 @@ def main():
         os.makedirs(CERTIFICATES_DETAILS_DIR)
 
     if not os.path.exists(CERT_DATA_FILENAME):
-        fetch_all_certificate_pages(CERT_DATA_FILENAME)
+        fetch_all_certificate_pages(CERT_DATA_FILENAME, min_end_date="20231013", max_end_date="20231013")
 
     process_certificates()
 
