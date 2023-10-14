@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import time
@@ -9,14 +8,16 @@ import requests
 
 from config import (
     BEARER_TOKEN,
-    CERT_DATA_FILENAME,
+    CERT_DATA_PATH,
     CERTIFICATES_DETAILS_DIR,
-    DOWNLOADS_DIR,
     FILTER_DATE_FORMAT,
-    OUTPUT_CERTS,
+    OUTPUT_CERTS_PATH,
     OUTPUT_DATE_FORMAT,
     PAGE_SIZE,
+    TRTS_FILE_PATH,
+    TYPES_MAP_FILE_PATH,
 )
+from data_utils import load_json_file, save_json_file
 
 requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
 
@@ -73,25 +74,16 @@ def fetch_data_with_retry(
 
 
 def fetch_trts_data():
-    trts_file_path = "downloads/trts.json"
-    if os.path.exists(trts_file_path):
-        logging.info("Файл 'downloads/trts.json' уже существует, загрузка не требуется.")
-        try:
-            with open(trts_file_path, "r", encoding="utf-8") as file:
-                data = json.load(file)
-            return data
-        except Exception as e:
-            logging.error(f"Ошибка при чтении файла: {e}")
-            return None
+    if os.path.exists(TRTS_FILE_PATH):
+        logging.info(f"Файл '{TRTS_FILE_PATH}' уже существует, загрузка не требуется.")
+        return load_json_file(TRTS_FILE_PATH)
     else:
         url = "https://pub.fsa.gov.ru/nsi/api/dicNormDoc/get"
         headers = {"Authorization": BEARER_TOKEN}
         try:
             if data := fetch_data_with_retry(url, headers):
-                with open(trts_file_path, "w", encoding="utf-8") as file:
-                    json.dump(data, file, ensure_ascii=False, indent=4)
-
-                logging.info("Данные успешно сохранены в downloads/trts.json")
+                save_json_file(data, TRTS_FILE_PATH)
+                logging.info(f"Данные успешно сохранены в '{TRTS_FILE_PATH}'")
                 return data
             else:
                 logging.error("Не удалось получить данные.")
@@ -172,42 +164,37 @@ def fetch_all_certificate_pages(
     logging.info("Все страницы с сертификатами скачаны")
 
 
-def fetch_identifiers() -> dict:
+def fetch_types_map() -> dict:
+    if os.path.exists(TYPES_MAP_FILE_PATH):
+        return load_json_file(TYPES_MAP_FILE_PATH)
+
     url = "https://pub.fsa.gov.ru/api/v1/rss/common/identifiers"
-    identifiers_filename = f"{DOWNLOADS_DIR}/identifiers.json"
-    if os.path.exists(identifiers_filename):
-        with open(identifiers_filename, "r") as identifiers_file:
-            return json.load(identifiers_file)
-
     headers = {"Authorization": BEARER_TOKEN}
-    identifiers = fetch_data_with_retry(url, headers, method="get")
-    with open(identifiers_filename, "w") as identifiers_file:
-        json.dump(identifiers, identifiers_file, ensure_ascii=False)
+    types_map = fetch_data_with_retry(url, headers, method="get")
+    save_json_file(types_map, TYPES_MAP_FILE_PATH)
 
-    logging.info("Файл идентификаторов скачан")
-    return identifiers
+    logging.info(f"Данные успешно сохранены в '{TYPES_MAP_FILE_PATH}'")
+    return types_map
 
 
 def fetch_certificate_details(certificate_id: int) -> dict:
-    detail_path = f"{CERTIFICATES_DETAILS_DIR}/{certificate_id}.json"
+    detail_path = os.path.join(CERTIFICATES_DETAILS_DIR, f"{certificate_id}.json")
     if os.path.exists(detail_path):
-        with open(detail_path, "r") as detail_file:
-            return json.load(detail_file)
+        return load_json_file(detail_path)
 
     url = f"https://pub.fsa.gov.ru/api/v1/rss/common/certificates/{certificate_id}"
     headers = {"Authorization": BEARER_TOKEN}
     details = fetch_data_with_retry(url, headers, method="get")
-    with open(detail_path, "w") as detail_file:
-        json.dump(details, detail_file, ensure_ascii=False)
+    save_json_file(details, detail_path)
 
     return details
 
 
 def process_certificates(tech_reg_ids: dict):
-    identifiers = fetch_identifiers()
-    status_map = {status["id"]: status["name"] for status in identifiers.get("status", {}).values()}
+    types_map = fetch_types_map()
+    status_map = {status["id"]: status["name"] for status in types_map.get("status", {}).values()}
 
-    df = pd.read_csv(CERT_DATA_FILENAME)
+    df = pd.read_csv(CERT_DATA_PATH)
     df = df.drop_duplicates(subset="id", keep="first", ignore_index=True)
 
     output_data = []
@@ -271,9 +258,9 @@ def process_certificates(tech_reg_ids: dict):
 
     new_df = pd.DataFrame(output_data)
 
-    new_df.to_csv(OUTPUT_CERTS, index=False)
+    new_df.to_csv(OUTPUT_CERTS_PATH, index=False)
 
-    logging.info(f"Данные сохранены в {OUTPUT_CERTS}")
+    logging.info(f"Данные сохранены в {OUTPUT_CERTS_PATH}")
 
 
 def main():
@@ -284,9 +271,9 @@ def main():
     interesting_ids = [id.strip() for id in ids_tech_reg.split(",")]
     trts, filtered_trts = get_trts_data(interesting_ids)
 
-    if not os.path.exists(CERT_DATA_FILENAME):
+    if not os.path.exists(CERT_DATA_PATH):
         fetch_all_certificate_pages(
-            CERT_DATA_FILENAME,
+            CERT_DATA_PATH,
             min_end_date="20240101",
             max_end_date="20240630",
             filter_tech_reg_ids=filtered_trts,
