@@ -14,3 +14,6 @@ FILTER_DATE_FORMAT = "%Y-%m-%d"
 OUTPUT_DATE_FORMAT = "%d/%m/%Y"
 
 BEARER_TOKEN = os.getenv("BEARER_TOKEN")
+IDS_TECH_REG = os.getenv("IDS_TECH_REG")
+MIN_END_DATE = os.getenv("MIN_END_DATE")
+MAX_END_DATE = os.getenv("MAX_END_DATE")

@@ -5,12 +5,16 @@ from datetime import datetime
 
 import pandas as pd
 import requests
+from tqdm import tqdm
 
 from config import (
     BEARER_TOKEN,
     CERT_DATA_PATH,
     CERTIFICATES_DETAILS_DIR,
     FILTER_DATE_FORMAT,
+    IDS_TECH_REG,
+    MAX_END_DATE,
+    MIN_END_DATE,
     OUTPUT_CERTS_PATH,
     OUTPUT_DATE_FORMAT,
     PAGE_SIZE,
@@ -44,11 +48,13 @@ def parse_date(date_str):
 
 def fetch_data_with_retry(
     url: str,
-    headers: dict,
+    headers: dict = None,
     method: str = "post",
     params: dict = None,
     max_retries: int = 3,
 ) -> dict:
+    if headers is None:
+        headers = {"Authorization": BEARER_TOKEN}
     if params is None:
         params = {}
     for attempt in range(max_retries):
@@ -79,9 +85,8 @@ def fetch_trts_data():
         return load_json_file(TRTS_FILE_PATH)
     else:
         url = "https://pub.fsa.gov.ru/nsi/api/dicNormDoc/get"
-        headers = {"Authorization": BEARER_TOKEN}
         try:
-            if data := fetch_data_with_retry(url, headers):
+            if data := fetch_data_with_retry(url):
                 save_json_file(data, TRTS_FILE_PATH)
                 logging.info(f"Данные успешно сохранены в '{TRTS_FILE_PATH}'")
                 return data
@@ -132,8 +137,7 @@ def fetch_certificate_page(
         "columnsSort": [{"column": "date", "sort": "DESC"}],
     }
 
-    headers = {"Authorization": BEARER_TOKEN}
-    return fetch_data_with_retry(url, headers, params=data)
+    return fetch_data_with_retry(url, params=data)
 
 
 def fetch_all_certificate_pages(
@@ -144,18 +148,18 @@ def fetch_all_certificate_pages(
 ):
     if filter_tech_reg_ids is None:
         filter_tech_reg_ids = {}
+    min_end_date = parse_date(min_end_date)
+    max_end_date = parse_date(max_end_date)
     first_page = fetch_certificate_page(
-        min_end_date=parse_date(min_end_date),
-        max_end_date=parse_date(max_end_date),
+        min_end_date=min_end_date,
+        max_end_date=max_end_date,
         filter_tech_reg_ids=list(filter_tech_reg_ids.keys()),
     )
     total_pages = calculate_total_pages(first_page["total"], PAGE_SIZE)
     items = first_page["items"]
 
     for page in range(1, total_pages):
-        page_data = fetch_certificate_page(
-            page, min_end_date=parse_date(min_end_date), max_end_date=parse_date(max_end_date)
-        )
+        page_data = fetch_certificate_page(page, min_end_date=min_end_date, max_end_date=max_end_date)
         items.extend(page_data["items"])
         time.sleep(0.1)
 
@@ -169,8 +173,7 @@ def fetch_types_map() -> dict:
         return load_json_file(TYPES_MAP_FILE_PATH)
 
     url = "https://pub.fsa.gov.ru/api/v1/rss/common/identifiers"
-    headers = {"Authorization": BEARER_TOKEN}
-    types_map = fetch_data_with_retry(url, headers, method="get")
+    types_map = fetch_data_with_retry(url, method="get")
     save_json_file(types_map, TYPES_MAP_FILE_PATH)
 
     logging.info(f"Данные успешно сохранены в '{TYPES_MAP_FILE_PATH}'")
@@ -183,8 +186,7 @@ def fetch_certificate_details(certificate_id: int) -> dict:
         return load_json_file(detail_path)
 
     url = f"https://pub.fsa.gov.ru/api/v1/rss/common/certificates/{certificate_id}"
-    headers = {"Authorization": BEARER_TOKEN}
-    details = fetch_data_with_retry(url, headers, method="get")
+    details = fetch_data_with_retry(url, method="get")
     save_json_file(details, detail_path)
 
     return details
@@ -200,12 +202,8 @@ def process_certificates(tech_reg_ids: dict):
     output_data = []
 
     total_rows = df.shape[0]
-    batch_size = 100
 
-    for row, certificate_id in enumerate(df["id"]):
-        if row % batch_size == 0 or row == total_rows:
-            logging.info(f"-- обработано строк: {row} из {total_rows}")
-
+    for row, certificate_id in tqdm(enumerate(df["id"]), total=total_rows, desc="Обработка строк"):
         certificate_details = fetch_certificate_details(certificate_id)
 
         emails = [
@@ -270,16 +268,14 @@ def main():
     if not os.path.exists(CERTIFICATES_DETAILS_DIR):
         os.makedirs(CERTIFICATES_DETAILS_DIR)
 
-    ids_tech_reg = "004, 010, 020, 007, 017"
-    interesting_ids = [id.strip() for id in ids_tech_reg.split(",")]
-    trts, filtered_trts = get_trts_data(interesting_ids)
+    cert_types = [id.strip() for id in IDS_TECH_REG.split(",")]
+    trts, filtered_trts = get_trts_data(cert_types)
 
     if not os.path.exists(CERT_DATA_PATH):
         fetch_all_certificate_pages(
             CERT_DATA_PATH,
-            # min_end_date="20240101",
-            min_end_date="20240630",
-            max_end_date="20240630",
+            min_end_date=MIN_END_DATE,
+            max_end_date=MAX_END_DATE,
             filter_tech_reg_ids=filtered_trts,
         )
 
