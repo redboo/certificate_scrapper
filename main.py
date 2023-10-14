@@ -115,7 +115,7 @@ def fetch_certificate_page(
 ) -> dict:
     if filter_tech_reg_ids is None:
         filter_tech_reg_ids = []
-    logging.info("Загрузка страницы: %d", num_page)
+    logging.info(f"Загрузка страницы: {num_page+1}")
     url = "https://pub.fsa.gov.ru/api/v1/rss/common/certificates/get"
     data = {
         "size": 100,
@@ -199,9 +199,12 @@ def process_certificates(tech_reg_ids: dict):
 
     output_data = []
 
+    total_rows = df.shape[0]
+    batch_size = 100
+
     for row, certificate_id in enumerate(df["id"]):
-        if row % 100 == 0:
-            logging.info("-- обработано строк: %d", row)
+        if row % batch_size == 0 or row == total_rows:
+            logging.info(f"-- обработано строк: {row} из {total_rows}")
 
         certificate_details = fetch_certificate_details(certificate_id)
 
@@ -274,7 +277,8 @@ def main():
     if not os.path.exists(CERT_DATA_PATH):
         fetch_all_certificate_pages(
             CERT_DATA_PATH,
-            min_end_date="20240101",
+            # min_end_date="20240101",
+            min_end_date="20240630",
             max_end_date="20240630",
             filter_tech_reg_ids=filtered_trts,
         )
