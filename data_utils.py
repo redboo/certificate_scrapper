@@ -7,8 +7,8 @@ def load_json_file(file_path):
         with open(file_path, "r", encoding="utf-8") as file:
             return json.load(file)
     except Exception as e:
-        logging.error(f"Ошибка при чтении файла {file_path}: {e}")
-        return None
+        # logging.error(f"Ошибка при чтении файла {file_path}: {e}")
+        raise e
 
 
 def save_json_file(data, file_path):

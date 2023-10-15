@@ -3,13 +3,21 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-PAGE_SIZE = 100
 DOWNLOADS_DIR = "downloads"
+
+CERT_PAGE_SIZE = 100
 CERTIFICATES_DETAILS_DIR = f"{DOWNLOADS_DIR}/certificate_details"
 CERT_DATA_PATH = os.path.join(DOWNLOADS_DIR, "cert_data.csv")
 OUTPUT_CERTS_PATH = os.path.join(DOWNLOADS_DIR, "output_certificates.csv")
+CERT_TYPES_MAP_FILE_PATH = os.path.join(DOWNLOADS_DIR, "cert_types_map.json")
+
+DECL_PAGE_SIZE = 1000
+DECLARATIONS_DETAILS_DIR = f"{DOWNLOADS_DIR}/declaration_details"
+DECL_DATA_PATH = os.path.join(DOWNLOADS_DIR, "decl_data.csv")
+OUTPUT_DECLS_PATH = os.path.join(DOWNLOADS_DIR, "output_declarations.csv")
+DECL_TYPES_MAP_FILE_PATH = os.path.join(DOWNLOADS_DIR, "decl_types_map.json")
+
 TRTS_FILE_PATH = os.path.join(DOWNLOADS_DIR, "trts.json")
-TYPES_MAP_FILE_PATH = os.path.join(DOWNLOADS_DIR, "types_map.json")
 FILTER_DATE_FORMAT = "%Y-%m-%d"
 OUTPUT_DATE_FORMAT = "%d/%m/%Y"
 
