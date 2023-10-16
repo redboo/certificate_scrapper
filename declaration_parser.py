@@ -103,6 +103,10 @@ def fetch_all_declaration_pages(
             pbar.update(1)
             page += 1
 
+    if not items:
+        logging.info("Данных по этим параметрам не найдено")
+        exit()
+
     df = pd.DataFrame(items)
 
     columns_to_keep = [

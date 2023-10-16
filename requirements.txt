@@ -2,3 +2,4 @@ pandas
 tqdm
 python-dotenv
 requests
+icecream
