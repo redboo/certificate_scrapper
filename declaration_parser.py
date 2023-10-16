@@ -5,6 +5,7 @@ from datetime import datetime
 from time import sleep
 
 import pandas as pd
+from icecream import ic
 from tqdm import tqdm
 
 from config import (
@@ -12,7 +13,6 @@ from config import (
     DECL_PAGE_SIZE,
     DECL_TYPES_MAP_FILE_PATH,
     DECLARATIONS_DETAILS_DIR,
-    DOWNLOADS_DIR,
     FILTER_DATE_FORMAT,
     IDS_TECH_REG,
     MAX_END_DATE,
@@ -36,7 +36,7 @@ def clean_downloads():
             logging.info(f"Папка '{dir_path}' удалена со всем содержимым")
 
     files_to_remove = [
-        DECL_DATA_PATH,
+        # DECL_DATA_PATH,
         OUTPUT_DECLS_PATH,
     ]
 
@@ -105,18 +105,6 @@ def fetch_all_declaration_pages(
 
     df = pd.DataFrame(items)
 
-    # ic(len(df[df["id"] == 11986630]["productFullName"].values[0]))
-    # ic(len(df[df["id"] == 11986630]["productIdentificationName"].values[0]))
-    # ic(len(df[df["id"] == 11986630]["productIdentificationArticle"].values[0]))
-
-    # df["productFullName"] = df["productFullName"].str.replace("\n", " ")
-    # df["productIdentificationName"] = df["productIdentificationName"].str.replace("\n", " ")
-    # df["productIdentificationName"] = df["productIdentificationArticle"].str.replace("\n", " ")
-
-    # ic(len(df[df["id"] == 11986630]["productFullName"].values[0]))
-    # ic(len(df[df["id"] == 11986630]["productIdentificationName"].values[0]))
-    # ic(len(df[df["id"] == 11986630]["productIdentificationArticle"].values[0]))
-
     columns_to_keep = [
         "id",
         "idStatus",
@@ -129,7 +117,6 @@ def fetch_all_declaration_pages(
 
     df = df[columns_to_keep]
 
-    # df.to_csv(filename, index=False, quoting=csv.QUOTE_ALL)
     df.to_csv(filename, index=False)
     logging.info(f"Данные {page} страниц с декларациями успешно сохранены в файл '{filename}'")
 
@@ -155,7 +142,7 @@ def fetch_declaration_details(declaration_id: int) -> dict:
         url = f"https://pub.fsa.gov.ru/api/v1/rds/common/declarations/{declaration_id}"
         details = fetch_data_with_retry(url, method="get")
         save_json_file(details, detail_path)
-        sleep(0.3)
+        sleep(0.2)
 
         return details
     except Exception as e:
@@ -163,10 +150,9 @@ def fetch_declaration_details(declaration_id: int) -> dict:
 
 
 def save_declarations_to_file(output_data):
-    output_file_path = os.path.join(DOWNLOADS_DIR, f"output_declarations_{MIN_END_DATE}_{MAX_END_DATE}.csv")
     df = pd.DataFrame(output_data)
-    df.to_csv(output_file_path, index=False)
-    logging.info(f"Данные {df.shape[0]} деклараций сохранены в '{output_file_path}'")
+    df.to_csv(OUTPUT_DECLS_PATH, index=False)
+    logging.info(f"Данные {df.shape[0]} деклараций сохранены в '{OUTPUT_DECLS_PATH}'")
 
 
 def parse_declarations():
@@ -193,6 +179,7 @@ def parse_declarations():
 
     df = pd.read_csv(DECL_DATA_PATH)
     df = df.drop_duplicates(subset="id", keep="first", ignore_index=True)
+    df["manufacterName"] = df["manufacterName"].apply(lambda x: x.replace("\n", " ").replace("\r", " "))
 
     output_data = []
 
@@ -211,10 +198,23 @@ def parse_declarations():
             for contact in declaration_details["applicant"]["contacts"]
             if contact["idContactType"] in [1, 7]
         ]
-        applicant_address = declaration_details["applicant"]["addresses"]
+
+        applicant_address = next(
+            (
+                address["fullAddress"].replace("\n", " ").replace("\r", " ")
+                for address in declaration_details["applicant"]["addresses"]
+                if address["fullAddress"] is not None
+            ),
+            None,
+        )
+
         manufacturer_address = declaration_details["manufacturer"]["addresses"]
 
+        link = f"https://pub.fsa.gov.ru/rds/declaration/view/{declaration_id}/common"
+
         trts_list = [trts.get(trts_id) for trts_id in declaration_details["idTechnicalReglaments"]]
+        if None in trts_list:
+            ic(declaration_details["idTechnicalReglaments"], link)
 
         reg_date = parse_date(df.at[row, "declDate"]).strftime(OUTPUT_DATE_FORMAT)
         end_date = parse_date(df.at[row, "declEndDate"]).strftime(OUTPUT_DATE_FORMAT)
@@ -222,14 +222,18 @@ def parse_declarations():
         try:
             output = {
                 "id": declaration_id,
-                "link": f"https://pub.fsa.gov.ru/rds/declaration/view/{declaration_id}/common",
+                "link": link,
                 "номер": df.at[row, "number"],
                 "статус": status_map.get(df.at[row, "idStatus"], ""),
                 "выпуск": df.at[row, "declObjectType"],
                 "схема": f"{declaration_details['idObjectDeclType']}д",
                 "дата оформления": reg_date,
                 "дата окончания": end_date,
-                "полное наименование": declaration_details["applicant"]["fullName"],
+                "полное наименование": declaration_details["applicant"]["fullName"]
+                .replace("\n", " ")
+                .replace("\r", " ")
+                if declaration_details["applicant"]["fullName"]
+                else None,
                 "фамилия": declaration_details["applicant"]["surname"],
                 "имя": declaration_details["applicant"]["firstName"],
                 "отчество": declaration_details["applicant"].get("patronymic", ""),
@@ -237,10 +241,12 @@ def parse_declarations():
                 "огрн": declaration_details["applicant"].get("ogrn", ""),
                 "почта": emails[0] if emails else "",
                 "телефон1": phones[0] if phones else "",
-                "адрес": applicant_address[0]["fullAddress"] if applicant_address else None,
+                "адрес": applicant_address,
                 "производитель": df.at[row, "manufacterName"],
-                "адрес производителя": manufacturer_address[0]["fullAddress"] if manufacturer_address else None,
-                "продукция": declaration_details["product"]["fullName"],
+                "адрес производителя": manufacturer_address[0]["fullAddress"].replace("\n", " ").replace("\r", " ")
+                if manufacturer_address
+                else None,
+                "продукция": declaration_details["product"]["fullName"].replace("\n", " ").replace("\r", " "),
                 "ТРТС": trts_list,
             }
         except Exception as e:
