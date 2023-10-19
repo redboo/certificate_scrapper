@@ -24,7 +24,7 @@ from data_utils import load_json_file, save_json_file
 from main import fetch_data_with_retry, get_trts_data, parse_date
 
 
-def clean_downloads():
+def clean_downloads() -> None:
     def remove_file(file_path):
         if os.path.exists(file_path):
             os.remove(file_path)
@@ -36,7 +36,6 @@ def clean_downloads():
             logging.info(f"Папка '{dir_path}' удалена со всем содержимым")
 
     files_to_remove = [
-        # DECL_DATA_PATH,
         OUTPUT_DECLS_PATH,
     ]
 
@@ -51,9 +50,9 @@ def clean_downloads():
 
 def fetch_declaration_page(
     num_page: int = 0,
-    min_end_date: datetime = None,
-    max_end_date: datetime = None,
-    filter_tech_reg_ids: list = None,
+    min_end_date: datetime | None = None,
+    max_end_date: datetime | None = None,
+    filter_tech_reg_ids: list | None = None,
 ) -> dict:
     if filter_tech_reg_ids is None:
         filter_tech_reg_ids = []
@@ -65,8 +64,8 @@ def fetch_declaration_page(
             "idTechReg": filter_tech_reg_ids,
             "regDate": {"minDate": "", "maxDate": ""},
             "endDate": {
-                "minDate": min_end_date.strftime(FILTER_DATE_FORMAT),
-                "maxDate": max_end_date.strftime(FILTER_DATE_FORMAT),
+                "minDate": min_end_date.strftime(FILTER_DATE_FORMAT) if min_end_date else None,
+                "maxDate": max_end_date.strftime(FILTER_DATE_FORMAT) if max_end_date else None,
             },
             "columnsSearch": [],
         },
@@ -80,12 +79,12 @@ def fetch_all_declaration_pages(
     filename: str,
     min_end_date: str = "",
     max_end_date: str = "",
-    filter_tech_reg_ids: dict = None,
-):
+    filter_tech_reg_ids: dict | None = None,
+) -> None:
     if filter_tech_reg_ids is None:
         filter_tech_reg_ids = {}
-    min_end_date = parse_date(min_end_date)
-    max_end_date = parse_date(max_end_date)
+    min_end_date_parsed = parse_date(min_end_date)
+    max_end_date_parsed = parse_date(max_end_date)
     items = []
     page = 0
 
@@ -93,8 +92,8 @@ def fetch_all_declaration_pages(
         while True:
             page_data = fetch_declaration_page(
                 page,
-                min_end_date=min_end_date,
-                max_end_date=max_end_date,
+                min_end_date=min_end_date_parsed,
+                max_end_date=max_end_date_parsed,
                 filter_tech_reg_ids=list(filter_tech_reg_ids.keys()),
             )
             if not page_data["items"]:
@@ -147,19 +146,19 @@ def fetch_declaration_details(declaration_id: int) -> dict:
         details = fetch_data_with_retry(url, method="get")
         save_json_file(details, detail_path)
         sleep(0.2)
-
         return details
     except Exception as e:
         logging.error(f"Ошибка при загрузке файла {detail_path}: {e}")
+        raise
 
 
-def save_declarations_to_file(output_data):
+def save_declarations_to_file(output_data: list) -> None:
     df = pd.DataFrame(output_data)
     df.to_csv(OUTPUT_DECLS_PATH, index=False)
     logging.info(f"Данные {df.shape[0]} деклараций сохранены в '{OUTPUT_DECLS_PATH}'")
 
 
-def parse_declarations():
+def parse_declarations() -> None:
     clean_downloads()
 
     if not os.path.exists(DECLARATIONS_DETAILS_DIR):
@@ -189,8 +188,14 @@ def parse_declarations():
 
     total_rows = df.shape[0]
 
-    for row, declaration_id in tqdm(enumerate(df["id"]), total=total_rows, desc="Обработка строк", unit="строк"):
+    for row, declaration_id in tqdm(enumerate(df["id"]), total=total_rows, desc="Скачивание деклараций", unit="файлов"):
         declaration_details = fetch_declaration_details(declaration_id)
+        declaration_file = f"{DECLARATIONS_DETAILS_DIR}/{declaration_id}.json"
+
+        applicant = declaration_details.get("applicant")
+        if not applicant:
+            ic(declaration_id, declaration_file)
+            ic(declaration_details)
 
         emails = [
             contact["value"]
@@ -263,4 +268,7 @@ def parse_declarations():
 
 
 if __name__ == "__main__":
-    parse_declarations()
+    try:
+        parse_declarations()
+    except KeyboardInterrupt:
+        exit("Работа парсера остановлена вручную. Процесс завершен.")
