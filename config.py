@@ -4,10 +4,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BEARER_TOKEN = os.getenv("BEARER_TOKEN")
-IDS_TECH_REG = os.getenv("IDS_TECH_REG")
-MIN_END_DATE = os.getenv("MIN_END_DATE")
-MAX_END_DATE = os.getenv("MAX_END_DATE")
+BEARER_TOKEN = str(os.getenv("BEARER_TOKEN"))
+IDS_TECH_REG = str(os.getenv("IDS_TECH_REG"))
+MIN_END_DATE = str(os.getenv("MIN_END_DATE"))
+MAX_END_DATE = str(os.getenv("MAX_END_DATE"))
 
 DOWNLOADS_DIR = "downloads"
 
